@@ -1,0 +1,146 @@
+---
+title: "Diner map project: Scrape diner info"
+author: "Emily Cibelli (emily.cibelli@gmail.com)"
+date: "Last updated: October 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# About
+This script scrapes a list of diner names and addresses from NJDiners.com (http://njdiners.com/cgi-bin/listing.cgi?ALL), to serve as input to a Shiny app mapping their location in the state. 
+
+This is not the most up-to-date list:  
+ * In my hometown (Nutley) one diner is closed, and the other has a new name.  
+ * Comments like this occur: <span style="color:red">demolished to make way for the fifty zillionth friggin' eckerd's in central jersey</span>  
+But it may be the most comprehensive.
+
+A basic R webscraping guideline tuotrial I followed:
+
+# Why?
+I'm from Jersey. We love our diners. I have a lifelong quest to visit them all. Hard for a transplant, but you gotta have dreams. 
+
+```{r packages, results='hide', message=FALSE, warning=FALSE}
+library(rvest)        # for scraping
+library(ggplot2)      # for plotting
+library(tidyverse)    # for data munging
+```
+
+# Basic scraping
+
+```{r dataScrape}
+
+# Specify URL to scrape
+dinerURL = "http://njdiners.com/cgi-bin/listing.cgi?ALL"
+
+# convert to XML
+dinerXML = read_html(dinerURL)
+
+# Extract to table
+dinerTab = dinerXML %>%
+  html_table(fill = TRUE)
+
+# Uncomment to inspect and see which pieces we might want
+# dinerTab
+# Table 3 has the relevant info
+
+# convert to data frame by splitting on newline characters
+# rbind each resulting row
+dinerDF = ok = as.data.frame(do.call(
+  rbind, apply(dinerTab[[3]], 1, function(x) {
+      do.call(expand.grid, strsplit(x, "\n"))
+})))
+
+```
+
+# Clean up resulting data frame
+
+### Basic structure
+
+```{r dataClean}
+
+# Do we have all the data? Cross check beginning and end with website
+head(dinerDF)
+tail(dinerDF)
+
+# Save a copy of the data frame before we go any farther
+dinerSaver = dinerDF
+
+# Add column name
+colnames(dinerDF) = "text"
+
+# Drop the first two rows (header material)
+dinerDF = dinerDF[-c(1,2),, drop = FALSE]
+rownames(dinerDF) = 1:nrow(dinerDF) 
+
+# convert first column into character for parsing
+dinerDF$text = as.character(dinerDF$text)
+
+```
+
+### Phone numbers (and comments)
+```{r phoneParse}
+
+# Split out the phone number
+dinerDF = dinerDF %>% 
+  separate(text, sep = " - ",
+           into = c("text", "phone"), extra = "drop", fill = "right")
+
+# Uncomment to look at all phone numbers for potential errors
+# dinerDF$phone
+# Looks like there are some irregularities/errors in spaces and punctuation
+# We have some comments in this column as well; let's parse into their own column
+
+# Most phone number entries are 15 characters:
+nchar(dinerDF$phone)
+# So we can use that position to pull comments that follow the number
+
+# Before we do that, clean up a few cases of non-standard phone numbers/
+# what are the more common misparsings?
+unique(nchar(dinerDF$phone))
+# 14, 16 are likely to be errors. longer are likely to be comments
+
+# ** Fix 14 characters **
+# (Missing dashes or space after the area code)
+# Note too that most end up with space after last number
+# We can clean that up later if needed; for now add for standardization
+dinerDF[nchar(dinerDF$phone) == 14,]
+dinerDF$phone[81] = "(201) 847-0336 "
+dinerDF$phone[233] = "(201) 434-5055 "
+dinerDF$phone[234] = "(201) 434-6769 "
+dinerDF$phone[525] = "(908) 813-0404 "
+
+# ** Fix 16 characters **
+dinerDF[nchar(dinerDF$phone) == 16,]
+# some have 2 spaces at the end - fix these in the column as a whole
+dinerDF$phone = gsub("  ", " ", dinerDF$phone)
+# some are typos - one number appears to be doubled
+dinerDF$phone[127] = "(609) 742-8988 "
+dinerDF$phone[331] = "(908) 264-9659 "
+# some have extra spaces in the beginning/middle
+dinerDF$phone[244] = "(973) 344-4098 "
+
+# Now we can split off comments
+dinerDF  = dinerDF %>% 
+  separate(phone, sep = 14,
+           into = c("phone", "comments"), extra = "drop", fill = "right")
+```
+
+### Addresses
+Most addresses seem to be running into the name of the diner. We can detect some of these by finding capital letters (the start of the address) that are not preceeded by a space - instances of inadvertent camel case. In other cases, we'll need to look instead for a letter adjacent to a number with no space.
+
+
+```{r address}
+
+# fix in cases of camel case
+blah$address = gsub("(?<=[A-Za-z])(?=[A-Z])", " ", 
+                    blah$text, perl = TRUE)
+
+# fix in cases of letter/number adjacency
+blah$address = gsub("(?<=[A-Za-z])(?=[0-9])", " ", 
+                    blah$address, perl = TRUE)
+
+# or maybe we use that as the point to split it?
+```
